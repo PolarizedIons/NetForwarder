@@ -30,33 +30,13 @@ namespace NetForwarder.Controllers
         }
 
         [HttpGet(RoutePath)]
-        public async Task<ActionResult> ForwardGet([FromRoute] string serviceName)
-        {
-            return await Forward(serviceName, HttpMethod.Get);
-        }
-
         [HttpPost(RoutePath)]
-        public async Task<ActionResult> ForwardPost([FromRoute] string serviceName)
-        {
-            return await Forward(serviceName, HttpMethod.Post);
-        }
-
         [HttpPut(RoutePath)]
-        public async Task<ActionResult> ForwardPut([FromRoute] string serviceName)
-        {
-            return await Forward(serviceName, HttpMethod.Put);
-        }
-
         [HttpPatch(RoutePath)]
-        public async Task<ActionResult> ForwardPatch([FromRoute] string serviceName)
-        {
-            return await Forward(serviceName, HttpMethod.Patch);
-        }
-
         [HttpDelete(RoutePath)]
-        public async Task<ActionResult> ForwardDelete([FromRoute] string serviceName)
+        public async Task<ActionResult> Forward([FromRoute] string serviceName)
         {
-            return await Forward(serviceName, HttpMethod.Delete);
+            return await Forward(serviceName, new HttpMethod(Request.Method));
         }
         
         [Route("{*url}", Order = 999)]

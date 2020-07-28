@@ -15,14 +15,17 @@ namespace NetForwarder.Services
 {
     public class ServiceForwarder
     {
+        private static readonly string[] DontSendHeaders = { "Content-Type", "Content-Length" };
+        private HttpClient _httpClient;
+
         public string Name { get; set; }
         public string Target { get; set; }
         public bool WhitelistEnabled { get; set; }
+        public IEnumerable<string>? WhitelistIPs { get; set; }
         public string? WhitelistUrl { get; set; }
         public string? WhitelistJsonPath { get; set; }
-        public IEnumerable<IPNetwork> WhitelistedIps { get; private set; } = new IPNetwork[0];
+        public IEnumerable<IPNetwork> AllowedNetworks { get; private set; } = new IPNetwork[0];
 
-        private HttpClient _httpClient;
 
         public ServiceForwarder(HttpClient httpClient)
         {
@@ -32,8 +35,9 @@ namespace NetForwarder.Services
         public async Task<HttpResponseMessage> ForwardRequest(HttpRequest request, HttpMethod method)
         {
             var remoteIpAddr = request.HttpContext.Connection.RemoteIpAddress;
-            if (!IPAddress.IsLoopback(remoteIpAddr) && !WhitelistedIps.Any(network => network.Contains(remoteIpAddr)))
+            if (!IPAddress.IsLoopback(remoteIpAddr) && !AllowedNetworks.Any(network => network.Contains(remoteIpAddr)))
             {
+                Log.Debug("'{remoteIpAddr}' was not whitelisted for service '{Name}'", remoteIpAddr, Name);
                 throw new ForwardRequestException("IP Address is not whitelisted");
             }
 
@@ -55,7 +59,7 @@ namespace NetForwarder.Services
 
             foreach (var requestHeader in request.Headers)
             {
-                if (requestHeader.Key != "Content-Type" && requestHeader.Key != "Content-Length")
+                if (!DontSendHeaders.Contains(requestHeader.Key))
                 {
                     forwardingRequest.Headers.Add(requestHeader.Key, requestHeader.Value.First());
                 }
@@ -86,32 +90,43 @@ namespace NetForwarder.Services
                 return;
             }
 
-            if (string.IsNullOrEmpty(WhitelistUrl))
+            if (string.IsNullOrEmpty(WhitelistUrl) && WhitelistIPs != null && !WhitelistIPs.Any())
             {
                 Log.Warning($"Service '{Name}' has no whitelisting setup!");
                 return;
             }
-            
+
             if (string.IsNullOrEmpty(WhitelistJsonPath))
             {
                 WhitelistJsonPath = "[*]";
             }
 
-            Log.Debug("Fetching IPs for service '{Name}'", Name);
+            if (WhitelistIPs != null && WhitelistIPs.Any() && !AllowedNetworks.Any())
+            {
+                Log.Debug("Setting {count} static CIDR ranges for service {service}", WhitelistIPs.Count(), Name);
+                AllowedNetworks = WhitelistIPs.Select(IPNetwork.Parse);
+            }
+
+            if (WhitelistIPs != null && WhitelistIPs.Any() && AllowedNetworks.Any())
+            {
+                return;
+            }
+
+            Log.Debug("Fetching IPs for service {Name}", Name);
 
             var req = await _httpClient.GetAsync(WhitelistUrl);
             if (!req.IsSuccessStatusCode)
             {
-                Log.Warning("Unable to get IP Addresses for service '{Name}'; Server returned a {StatusCode}", Name, req.StatusCode);
+                Log.Warning("Unable to get IP Addresses for service {Name}; Server returned a {StatusCode}", Name, req.StatusCode);
                 return;
             }
 
             var body = await req.Content.ReadAsStringAsync();
             JObject responseJson = JObject.Parse(body);
 
-            WhitelistedIps = responseJson.SelectTokens(WhitelistJsonPath)
+            AllowedNetworks = responseJson.SelectTokens(WhitelistJsonPath)
                 .Select(x => IPNetwork.Parse(x.Value<string>()));
-            Log.Debug("Loaded {Count} CIDR ranges for service '{Name}'", WhitelistedIps.Count(), Name);
+            Log.Debug("Fetched {Count} CIDR ranges for service {Name}", AllowedNetworks.Count(), Name);
         }
     }
 }
